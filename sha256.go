@@ -19,6 +19,7 @@ package sha256
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"hash"
 	"runtime"
 )
@@ -47,6 +48,99 @@ type digest struct {
 	x   [chunk]byte
 	nx  int
 	len uint64
+}
+
+// added ability to marshal unmarshal binaries
+// carried over from the ability present in native golang crypto library
+// at github.com/golang/go/blob/master/src/crypto/sha256/sha256.go
+
+const (
+	magic256      = "sha\x03"
+	marshaledSize = len(magic256) + 8*4 + chunk + 8
+)
+
+func (d *digest) MarshalBinary() ([]byte, error) {
+	b := make([]byte, 0, marshaledSize)
+	b = append(b, magic256...)
+	b = appendUint32(b, d.h[0])
+	b = appendUint32(b, d.h[1])
+	b = appendUint32(b, d.h[2])
+	b = appendUint32(b, d.h[3])
+	b = appendUint32(b, d.h[4])
+	b = appendUint32(b, d.h[5])
+	b = appendUint32(b, d.h[6])
+	b = appendUint32(b, d.h[7])
+	b = append(b, d.x[:d.nx]...)
+	b = b[:len(b)+len(d.x)-int(d.nx)] // already zero
+	b = appendUint64(b, d.len)
+	return b, nil
+}
+
+func (d *digest) UnmarshalBinary(b []byte) error {
+	if string(b[:len(magic256)]) != magic256 {
+		return errors.New("crypto/sha256: invalid hash state identifier")
+	}
+	if len(b) != marshaledSize {
+		return errors.New("crypto/sha256: invalid hash state size")
+	}
+	b = b[len(magic256):]
+	b, d.h[0] = consumeUint32(b)
+	b, d.h[1] = consumeUint32(b)
+	b, d.h[2] = consumeUint32(b)
+	b, d.h[3] = consumeUint32(b)
+	b, d.h[4] = consumeUint32(b)
+	b, d.h[5] = consumeUint32(b)
+	b, d.h[6] = consumeUint32(b)
+	b, d.h[7] = consumeUint32(b)
+	b = b[copy(d.x[:], b):]
+	b, d.len = consumeUint64(b)
+	d.nx = int(d.len % chunk)
+	return nil
+}
+
+func putUint32(x []byte, s uint32) {
+	_ = x[3]
+	x[0] = byte(s >> 24)
+	x[1] = byte(s >> 16)
+	x[2] = byte(s >> 8)
+	x[3] = byte(s)
+}
+
+func putUint64(x []byte, s uint64) {
+	_ = x[7]
+	x[0] = byte(s >> 56)
+	x[1] = byte(s >> 48)
+	x[2] = byte(s >> 40)
+	x[3] = byte(s >> 32)
+	x[4] = byte(s >> 24)
+	x[5] = byte(s >> 16)
+	x[6] = byte(s >> 8)
+	x[7] = byte(s)
+}
+
+func appendUint64(b []byte, x uint64) []byte {
+	var a [8]byte
+	putUint64(a[:], x)
+	return append(b, a[:]...)
+}
+
+func appendUint32(b []byte, x uint32) []byte {
+	var a [4]byte
+	putUint32(a[:], x)
+	return append(b, a[:]...)
+}
+
+func consumeUint64(b []byte) ([]byte, uint64) {
+	_ = b[7]
+	x := uint64(b[7]) | uint64(b[6])<<8 | uint64(b[5])<<16 | uint64(b[4])<<24 |
+		uint64(b[3])<<32 | uint64(b[2])<<40 | uint64(b[1])<<48 | uint64(b[0])<<56
+	return b[8:], x
+}
+
+func consumeUint32(b []byte) ([]byte, uint32) {
+	_ = b[3]
+	x := uint32(b[3]) | uint32(b[2])<<8 | uint32(b[1])<<16 | uint32(b[0])<<24
+	return b[4:], x
 }
 
 // Reset digest back to default
