@@ -1,1 +1,1 @@
-module github.com/minio/sha256-simd
+module github.com/gaurav-terainsights/sha256-simd
